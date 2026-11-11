@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>CraftsmanMap – Overture diagnostics</title>
+<style>body{font:15px/1.55 system-ui,Arial,sans-serif;max-width:850px;margin:32px auto;padding:0 18px;color:#16302a;background:#f7f9f7}h1{line-height:1.15}button,a.action{background:#1d5c45;color:white;border:0;border-radius:8px;padding:11px 16px;cursor:pointer;font-weight:600}button:disabled{opacity:.5}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#fff;border:1px solid #cad8d1;padding:20px;border-radius:10px;color:#223333}.hint{background:#e6f1ed;border-radius:8px;padding:10px 15px}.buttons{display:flex;gap:12px;flex-wrap:wrap}.small{font-size:13px;color:#41564e}</style>
+</head><body><h1>Overture Places – search diagnostics</h1>
+<p>Tests business-place map tiles. No business registry or API key is required. <strong>No keys are displayed.</strong></p>
+<div class="buttons"><button id="run">Run diagnostics</button><button id="copy" disabled>Copy results</button><a href="./">Back to map</a></div>
+<p class="hint">Run the diagnostics and copy the results if you need technical support. No business records are stored by this page.</p>
+<pre id="result" aria-live="polite">Select Run diagnostics to test Overture S3, CDN and vector tile decoding.</pre>
+<p class="small">Source: Overture Maps Places, 2026-10-21.0 (reserv 2026-09-23.1). A local relay, if configured, reads byte ranges from Overture S3.</p>
+<script src="https://cdn.jsdelivr.net/npm/pmtiles@4.5.0/dist/pmtiles.js"></script>
+<script type="module">
+import {CONFIG} from './assets/config.js';
+import {overtureSources, eligibleOvertureReleases} from './assets/overture-sources.js';
+import {tilesForRadius} from './assets/radius-search.js';
+const $ = id => document.getElementById(id);
+const entries = [];
+function log(label, detail='') { const line = `${new Date().toLocaleTimeString('en-US')} | ${label}${detail ? ' | '+detail : ''}`; entries.push(line); $('result').textContent=entries.join('\n'); }
+function limited(promise, ms=13000) { let timeout; return Promise.race([promise,new Promise((_,reject)=>timeout=setTimeout(()=>reject(new Error(`Timeout ${ms} ms`)),ms))]).finally(()=>clearTimeout(timeout)); }
+function safe(e) { return String(e?.message || e || 'unknown error').slice(0,270); }
+async function rawRange(source) {
+  const controller=new AbortController();const t=setTimeout(()=>controller.abort(),13000);
+  try {
+    const r=await fetch(source.url,{headers:{Range:'bytes=0-16383'},signal:controller.signal,cache:'no-store'});
+    const hdr=r.headers.get('content-range') || '-';
+    if(r.status!==206) { const reason=(await r.text()).slice(0,220); throw new Error(`HTTP ${r.status} (expected 206), Content-Range ${hdr}; ${reason}`); }
+    const bytes=await r.arrayBuffer();
+    const isPmtiles=new TextDecoder().decode(bytes.slice(0,7))==='PMTiles';
+    if(!isPmtiles) throw new Error(`HTTP 206 but PMTiles signature missing (${bytes.byteLength} bytes)`);
+    return `HTTP 206, ${bytes.byteLength} bytes, PMTiles signature`;
+  } finally {clearTimeout(t)}
+}
+async function run(){
+  $('run').disabled=true;$('copy').disabled=true;entries.length=0;
+  log('Version', CONFIG.appVersion);log('Origin', location.origin);
+  log('Archive', CONFIG.overtureRelease);
+  if (!window.pmtiles?.PMTiles) { log('ERROR PMTiles-js','The CDN library failed to load. Check network filtering/jsDelivr.'); $('run').disabled=false;$('copy').disabled=false;return; }
+  const releases=eligibleOvertureReleases(CONFIG);
+  log('Eligible releases', releases.join(', ') || 'NONE: no eligible release');
+  let success=false;
+  for(const release of releases){
+    log('TESTING RELEASE', release);
+    const sources=overtureSources(CONFIG,window.location,release);
+    let working=[];
+    for(const source of sources){
+      try { const outcome=await rawRange(source); log(`OK RANGE ${source.name}`,outcome); working.push(source); }
+      catch(e){log(`ERROR RANGE ${source.name}`,safe(e));}
+    }
+    if(!working.length){log('RELEASE FAILED',`No source returned a valid PMTiles header for ${release}`);continue;}
+    for(const source of working) {
+      try {
+        const archive=new window.pmtiles.PMTiles(source.url);
+        const header=await limited(archive.getHeader());
+        log(`OK PMTILES ${source.name}`,`release ${release}, zoom ${header.minZoom}-${header.maxZoom}`);
+        const tiles=tilesForRadius([-0.1276,51.5072],1000,Math.min(14,header.maxZoom),220).slice(0,12);
+        let loaded=0,empty=0;
+        let sample=null;
+        for(const tile of tiles){
+          const result=await limited(archive.getZxy(tile.z,tile.x,tile.y),15000);
+          if(result?.data?.byteLength){loaded++; if(!sample) sample=result.data;} else empty++;
+        }
+        log(`OK TILES ${source.name}`,`${loaded} with data, ${empty} empty (Sample tiles near London: ${tiles.length} tiles)`);
+        if(sample){
+          try {
+            const [pbf, vt] = await limited(Promise.all([import('https://cdn.jsdelivr.net/npm/pbf@5.1.2/+esm'),import('https://cdn.jsdelivr.net/npm/@mapbox/vector-tile@3.0.0/+esm')]));
+            const decoded=new vt.VectorTile(new pbf.PbfReader(sample));
+            const layers=Object.keys(decoded.layers||{});
+            log(`OK MVT ${source.name}`,layers.map(key=>`${key}:${decoded.layers[key].length}`).join(', ') || 'No layers');
+            if(!decoded.layers?.place) throw new Error('Vector tile is missing the expected place layer');
+            const place=decoded.layers.place;
+            if(place.length){
+              const props=place.feature(0).properties||{};
+              log('MVT fields',Object.keys(props).join(', ').slice(0,700));
+              if(!('taxonomy' in props) && !('basic_category' in props)) log('NOTE KATEGORIER','No modern taxonomy/basic_category in the first place; check mapping.');
+            }
+          }catch(e){log(`ERROR MVT ${source.name}`,safe(e));continue;}
+        }else{log(`NOTE MVT ${source.name}`,'Sampled tiles were empty; decoding could not be tested.');}
+        success=true;
+        log('SELECTED RELEASE',release);
+        break;
+      }catch(e){log(`ERROR PMTILES/TILES ${source.name}`,safe(e));}
+    }
+    if(success)break;
+  }
+  if(!success)log('STOPP','No verified Places source. Check RANGE/PMTILES/MVT errors above.');
+  log('DONE','Copy the results above.'); $('run').disabled=false;$('copy').disabled=false;
+}
+$('run').onclick=run;
+$('copy').onclick=async()=>{try{await navigator.clipboard.writeText(entries.join('\n'));$('copy').textContent='Copied!';setTimeout(()=>$('copy').textContent='Copy results',2000)}catch{window.prompt('Copy text:',entries.join('\n'));}};
+</script></body></html>

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="description" content="CraftsmanMap — Find local craftsmen, services &amp; suppliers. Explore businesses worldwide on an interactive map.">
+  <meta property="og:title" content="CraftsmanMap">
+  <meta property="og:description" content="Find local craftsmen, services &amp; suppliers.">
+  <meta property="og:type" content="website">
+  <meta name="theme-color" content="#f7f8f3">
+  <meta name="referrer" content="no-referrer">
+  <title>CraftsmanMap | Find local craftsmen, services &amp; suppliers.</title>
+  <link rel="preconnect" href="https://tiles.openfreemap.org" crossorigin>
+  <link rel="preconnect" href="https://tiles.overturemaps.org" crossorigin>
+  <link rel="preconnect" href="https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com" crossorigin>
+  <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/pbf@5.1.2/+esm" crossorigin>
+  <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@mapbox/vector-tile@3.0.0/+esm" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.10.0/dist/maplibre-gl.css" crossorigin="anonymous">
+  <link rel="icon" type="image/png" sizes="32x32" href="./assets/favicon-32.png">
+  <link rel="apple-touch-icon" sizes="192x192" href="./assets/app-icon-192.png">
+  <link rel="manifest" href="./site.webmanifest">
+  <link rel="stylesheet" href="./assets/styles.css?v=craftsmanmap-en-v1.1">
+</head>
+<body>
+  <a class="skip-link" href="#map">Skip to map</a>
+  <div class="app-shell">
+    <aside id="sidebar" class="sidebar" aria-label="Find businesses">
+      <header class="brand-row">
+        <a class="brand" href="./" aria-label="CraftsmanMap, back to map">
+          <img class="brand-icon" src="./assets/app-icon-192.png" width="66" height="66" alt="" aria-hidden="true">
+          <span><strong data-app-name>CraftsmanMap</strong><small>Find local craftsmen, services &amp; suppliers.</small></span>
+        </a>
+        <button id="panel-toggle" class="icon-button panel-toggle" type="button" aria-label="Show or hide search panel" aria-expanded="true">‹</button>
+      </header>
+      <div class="panel-content">
+        <section class="intro" aria-label="How to search">
+          <h1>Find local help, anywhere</h1>
+          <p>Find local craftsmen, services &amp; suppliers.</p>
+        </section>
+        <section class="radius-search" aria-labelledby="radius-title">
+          <div class="section-title-row"><h2 id="radius-title">Find businesses</h2></div>
+          <label class="radius-select-label" for="radius-select"><span>Search radius</span>
+            <select id="radius-select">
+              <option value="500">500 m</option>
+              <option value="1000" selected>1 km</option>
+              <option value="2000">2 km</option>
+              <option value="5000">5 km</option>
+              <option value="10000">10 km</option>
+              <option value="20000">20 km</option>
+            </select>
+          </label>
+          <p id="radius-scale-note" class="radius-scale-note" hidden>Larger search areas can take longer.</p>
+          <button id="search-map-center" class="primary-button main-search-action" type="button" disabled aria-pressed="false">
+            <span aria-hidden="true">⌖</span> Search the map
+          </button>
+          <p id="radius-help" class="field-help" role="status" aria-live="polite">Press the button and choose a point on the map to start searching.</p>
+          <div class="map-action-row">
+            <button id="show-search-area" class="text-button" type="button" hidden>Show search area</button>
+            <button id="clear-radius-search" class="text-button danger-text" type="button" hidden>Clear search</button>
+          </div>
+          <details class="address-lookup" id="address-lookup-details" open><summary class="address-lookup-summary">Search by address or place</summary>
+            <label for="address-input">Address or place</label>
+            <form id="address-search-form" class="address-search-form" autocomplete="off">
+              <input id="address-input" type="search" maxlength="150" minlength="2" placeholder="e.g. 10 Downing Street, London" aria-describedby="address-search-note">
+              <button id="address-submit" type="submit" disabled>Find address</button>
+            </form>
+            <p id="address-search-note" class="address-note">The address is sent only when you select Find address.</p>
+            <div id="address-results" class="address-results" aria-live="polite" hidden></div>
+          </details>
+        </section>
+        <!-- Filters remain grouped before the results, including on mobile. -->
+        <div id="filter-tools" class="filter-tools" role="group" aria-label="Filter business results">
+        <section class="search-box" aria-label="Filter found businesses">
+          <label for="business-search">Filter results</label>
+          <div class="search-input-wrap">
+            <input id="business-search" type="search" placeholder="Business name or service" autocomplete="off">
+            <button id="clear-search" type="button" aria-label="Clear text filter">×</button>
+          </div>
+        </section>
+        <section class="filters" aria-labelledby="filters-title">
+          <div class="section-title-row">
+            <h2 id="filters-title">Choose categories <span id="selected-category-label" class="subtle-inline">· all selected</span></h2>
+            <button id="category-toggle" class="text-button" type="button" aria-expanded="false" aria-controls="category-list">Show categories</button>
+          </div>
+          <button id="toggle-all" class="category-select-all" type="button" hidden aria-controls="category-list" aria-label="Deselect all categories">Deselect all</button>
+          <div id="category-list" class="category-list" hidden></div>
+        </section>
+        </div>
+        <section class="results-section" aria-labelledby="results-title">
+          <div class="section-title-row result-title-row"><h2 id="results-title">Businesses in this area</h2><span class="count-badge" id="result-count" aria-label="Number of visible businesses">0</span><button id="reset-filters" class="text-button reset-filters" type="button" hidden>Clear filters</button></div>
+          <p id="result-total" class="results-subtitle">Sorted by distance</p>
+          <p id="result-feedback" class="result-feedback" role="alert" hidden></p>
+          <button id="retry-results" class="text-button retry-results" type="button" hidden>Retry</button>
+          <details id="result-diagnostics" class="result-diagnostics" hidden><summary>Why is this search incomplete?</summary><p id="result-diagnostics-text"></p><a href="./overture-test.html">Test Overture connection</a></details>
+          <ul id="results" class="results" aria-live="polite"><li class="empty">Press <strong>Search the map</strong> to begin.</li></ul>
+          <button id="more-results" class="more-results" type="button" hidden>Show more businesses</button>
+        </section>
+        <footer class="sidebar-footer">
+          <button id="about-open" class="text-button" type="button">About</button>
+          <a href="./about.html">Method & data sources</a>
+          <a href="./privacy.html">Privacy</a>
+          <a href="./terms.html">Terms</a>
+        </footer>
+      </div>
+    </aside>
+    <main class="map-wrap">
+      <div id="map" aria-label="Map of businesses worldwide"></div>
+      <div id="map-status" class="map-status" role="status" aria-live="polite">Loading map…</div>
+      <div id="map-instruction" class="map-instruction" hidden aria-live="polite"><span class="map-instruction-dot" aria-hidden="true">+</span><strong>Choose a point on the map</strong><small>The search starts automatically</small></div>
+      <div class="map-note">Overture Places <span data-release></span> · Base map: OpenFreeMap / OpenStreetMap</div>
+    </main>
+  </div>
+  <dialog id="about-dialog" class="about-dialog">
+    <div class="dialog-head"><div><span class="eyebrow">About</span><h2>CraftsmanMap</h2></div><button id="about-close" class="icon-button" type="button" aria-label="Close">×</button></div>
+    <div class="dialog-global-brand"><img src="./assets/app-icon-192.png" alt="" width="74" height="74"><div><strong>CraftsmanMap</strong><p class="brand-tagline">Find local craftsmen, services &amp; suppliers.</p></div></div>
+    <p>Find contractors, service providers and stores. Select <strong>Search the map</strong>, place a point and see nearby results. You can also search by address or place.</p>
+    <p>Choose from 13 categories, combine several, and filter by name or service. Business listings are sourced from Overture Maps Places. Results are sorted by straight-line distance.</p>
+    <p><strong>Not an endorsement.</strong> Check that a business is still active, offers the service you need, and holds any locally required licences and insurance.</p>
+    <p>Names, contact details and positions come from Overture Maps Places. CraftsmanMap does not maintain a business registry or independently verify listings. <a href="https://docs.overturemaps.org/support/" target="_blank" rel="noopener noreferrer">Report source-data errors to Overture</a>.</p>
+    <p class="dialog-contact">Operator: <strong>Robert Nord</strong> · <a href="mailto:robert_nord@outlook.com">robert_nord@outlook.com</a></p>
+    <div class="dialog-links"><a href="./about.html">Method & data sources</a><a href="./privacy.html">Privacy</a><a href="./terms.html">Terms</a></div>
+    <small>Version <span data-version></span> · Places <span data-release></span></small>
+  </dialog>
+  <noscript>CraftsmanMap requires JavaScript to display the map.</noscript>
+  <script src="./assets/bootstrap.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pmtiles@4.5.0/dist/pmtiles.js" crossorigin="anonymous"></script>
+  <script type="module" src="./assets/app.js?v=craftsmanmap-en-v1.1"></script>
+</body>
+</html>
