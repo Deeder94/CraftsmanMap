@@ -1,6 +1,6 @@
 export const CONFIG = Object.freeze({
   appName: 'CraftsmanMap',
-  appVersion: '2026.11.11-craftsmanmap-global-en-v1.1',
+  appVersion: '2026.11.12-global-en-v1.5-sources-and-accountability',
   countryName: 'Worldwide',
   overtureRelease: '2026-10-21.0',
   // Public launch requires a controlled same-origin range-capable PMTiles endpoint.

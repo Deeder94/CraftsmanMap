@@ -1,8 +1,9 @@
-import { CONFIG } from './config.js?v=craftsmanmap-en-v1.1';
+import { isSuppressedListing } from './listing-suppression.js';
+import { CONFIG } from './config.js?v=global1.5';
 import { overtureSources, eligibleOvertureReleases, describeOvertureFailure } from './overture-sources.js';
 import {
-  CATEGORIES, mightMatchCategory, classifyPlace, classifyPlaceDetailed, isUsablePlace, firstWebsite, bestAddress,
-  sourceDatasets, statusLabel, safeJson
+  CATEGORIES, mightMatchCategory, classifyPlace, classifyPlaceDetailed, isUsablePlace, firstWebsite,
+  sourceDatasets
 } from './classifier.js';
 import {
   bboxForRadius, circlePolygon, haversineMeters, tilesForRadius, mvtPointToLngLat, deadlineForRadiusSearch
@@ -95,10 +96,6 @@ function formatRadius(meters) {
 function formatDistance(meters) {
   if (!Number.isFinite(meters)) return '';
   return meters >= 1000 ? `${(meters / 1000).toFixed(meters >= 10000 ? 0 : 1)} km` : `${Math.round(meters)} m`;
-}
-
-function entityTypeLabel(type) {
-  return ({service:'Service provider', retail:'Shop / retailer', rental:'Equipment hire', consultant:'Consultant / inspector'})[type] || '';
 }
 
 function fillStaticUi() {
@@ -387,16 +384,6 @@ function uniqueKey(feature, props) {
   return String(props.id || feature.id || `${feature.geometry?.coordinates?.join(',')}:${props['@name'] || ''}`);
 }
 
-function overtureAddressParts(properties = {}) {
-  const addresses = safeJson(properties.addresses, []);
-  const list = Array.isArray(addresses) ? addresses : [];
-  const a = list[0] || {};
-  return {
-    locality: String(a?.locality || a?.city || ''),
-    postcode: String(a?.postcode || '').replace(/\s+/g, '')
-  };
-}
-
 function normalizeFeature(feature, distanceFrom = null, knownClassification = null) {
   const props = feature.properties || {};
   if (!knownClassification && !isUsablePlace(props, CONFIG.minimumConfidence)) return null;
@@ -411,8 +398,6 @@ function normalizeFeature(feature, distanceFrom = null, knownClassification = nu
   const category = CATEGORIES[categoryKey];
   const id = uniqueKey(feature, props);
   const name = props['@name'] || props.name || props.basic_category || category.label;
-  const confidence = Number(props.confidence);
-  const addressParts = overtureAddressParts(props);
   const distanceMeters = distanceFrom ? haversineMeters(distanceFrom, [lng, lat]) : null;
   return {
     type: 'Feature', id,
@@ -425,16 +410,8 @@ function normalizeFeature(feature, distanceFrom = null, knownClassification = nu
       subcategoryLabel: classification?.subcategoryLabel || category.label,
       short: category.short, color: category.color,
       website: firstWebsite(props),
-      phones: safeJson(props.phones, []), emails: safeJson(props.emails, []), socials: safeJson(props.socials, []),
-      address: bestAddress(props), locality: addressParts.locality, postcode: addressParts.postcode, status: statusLabel(props),
-      confidence: Number.isFinite(confidence) ? confidence : null,
       sources: sourceDatasets(props).join(', '),
-      overtureId: props.id || '',
       categoryBasis: classification?.basis || 'taxonomy',
-      categoryReason: classification?.reason || '',
-      categoryScore: Number.isFinite(Number(classification?.score)) ? Number(classification.score) : null,
-      categoryConfidence: classification?.categoryConfidence || '',
-      entityType: classification?.entityType || '',
       distanceMeters: Number.isFinite(distanceMeters) ? distanceMeters : null
     }
   };
@@ -443,12 +420,13 @@ function normalizeFeature(feature, distanceFrom = null, knownClassification = nu
 function filteredFeatures() {
   const query = ($('#business-search').value || '').trim().toLocaleLowerCase('en');
   return state.visibleFeatures.filter(feature => {
+    if (isSuppressedListing(feature)) return false;
     const p = feature.properties;
     const categoryKeys = Array.isArray(p.categoryKeys) ? p.categoryKeys : [p.categoryKey].filter(Boolean);
     if (!categoryKeys.some(key => state.selectedCategories.has(key))) return false;
     if (!query) return true;
     const secondary = Array.isArray(p.secondaryCategoryLabels) ? p.secondaryCategoryLabels.join(' ') : '';
-    return `${p.name} ${p.categoryLabel} ${p.subcategoryLabel || ''} ${secondary} ${p.address}`.toLocaleLowerCase('en').includes(query);
+    return `${p.name} ${p.categoryLabel} ${p.subcategoryLabel || ''} ${secondary}`.toLocaleLowerCase('en').includes(query);
   });
 }
 
@@ -628,7 +606,7 @@ function updateResultList(features = filteredFeatures()) {
     li.innerHTML = `
       <button class="result-card${state.selectedFeatureId === String(feature.id) ? ' is-map-selected' : ''}" data-id="${text(feature.id)}" aria-pressed="${String(state.selectedFeatureId === String(feature.id))}" aria-label="Show ${text(p.name)} on the map">
         <span class="result-symbol" style="--cat:${text(p.color)}">${text(p.short)}</span>
-        <span class="result-copy"><strong>${text(p.name)}</strong><small class="result-meta">${text(p.subcategoryLabel || p.categoryLabel)}${distance ? `<span class="result-distance">${text(distance.replace(' · ', ''))}</span>` : ''}</small>${p.address ? `<small class="result-address">${text(p.address)}</small>` : ''}</span>
+        <span class="result-copy"><strong>${text(p.name)}</strong><small class="result-meta">${text(p.subcategoryLabel || p.categoryLabel)}${distance ? `<span class="result-distance">${text(distance.replace(' · ', ''))}</span>` : ''}</small></span>
         <span class="result-chevron" aria-hidden="true">›</span>
       </button>`;
     fragment.append(li);
@@ -681,54 +659,25 @@ function safeWebsiteUrl(value) {
   } catch { return null; }
 }
 
-function firstSafeTelephone(raw) {
-  const list = Array.isArray(raw) ? raw : safeJson(raw, []);
-  const entries = Array.isArray(list) ? list : [list];
-  for (const entry of entries) {
-    const value = String(entry?.number || entry?.phone || entry || '').trim();
-    if (/^\+?[0-9() .-]{6,24}$/.test(value) && value.replace(/\D/g, '').length >= 6) {
-      return {display: value, link: value.replace(/[^0-9+]/g, '')};
-    }
-  }
-  return null;
-}
-function firstSafeEmail(raw) {
-  const list = Array.isArray(raw) ? raw : safeJson(raw, []);
-  const entries = Array.isArray(list) ? list : [list];
-  return entries.map(v => String(v?.email || v || '').trim())
-    .find(v => /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(v) && v.length <= 180) || '';
-}
-function firstSafeSocial(raw) {
-  const list = Array.isArray(raw) ? raw : safeJson(raw, []);
-  const entries = Array.isArray(list) ? list : [list];
-  return entries.map(v => safeWebsiteUrl(v?.url || v)).find(Boolean) || '';
-}
 function showPopup(feature, lngLat) {
   const p = feature.properties || {};
   const website = safeWebsiteUrl(p.website);
-  const phone = firstSafeTelephone(p.phones);
-  const email = firstSafeEmail(p.emails);
-  const social = firstSafeSocial(p.socials);
   const distance = Number.isFinite(p.distanceMeters) ? formatDistance(p.distanceMeters) : '';
   const coordinates = feature.geometry?.coordinates || [];
-  const mapLink = Number.isFinite(coordinates[0]) && Number.isFinite(coordinates[1])
-    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${coordinates[1]},${coordinates[0]}`)}` : '';
-  const secondary = Array.isArray(p.secondaryCategoryLabels)
-    ? [...new Set(p.secondaryCategoryLabels)].filter(Boolean).filter(x => x !== p.subcategoryLabel).slice(0,4) : [];
+  const coordinateText = Number.isFinite(coordinates[0]) && Number.isFinite(coordinates[1])
+    ? `${coordinates[1].toFixed(5)}, ${coordinates[0].toFixed(5)}` : '';
   const categoryBasis = p.categoryBasis === 'profile' ? 'business profile and taxonomy'
     : p.categoryBasis === 'name' ? 'business name and taxonomy' : 'Overture taxonomy';
-  const extraLinks = [
-    phone ? `<a class="popup-link-item" href="tel:${text(phone.link)}">Call: ${text(phone.display)}</a>` : '',
-    email ? `<a class="popup-link-item" href="mailto:${text(email)}">Email: ${text(email)}</a>` : '',
-    mapLink ? `<a class="popup-link-item" href="${text(mapLink)}" target="_blank" rel="noopener noreferrer">Open location in maps ↗</a>` : '',
-    social ? `<a class="popup-link-item" href="${text(social)}" target="_blank" rel="noopener noreferrer nofollow">Social media ↗</a>` : ''
-  ].filter(Boolean).join('');
-  const sourceInfo = `<p>Business data from Overture Places ${text(state.activeOvertureRelease || CONFIG.overtureRelease)}.</p>
-    ${p.sources ? `<p>Underlying sources: ${text(p.sources)}.</p>` : ''}
-    <p>Classification: ${text(categoryBasis)}. Source data is not independently verified by CraftsmanMap.</p>
-    ${Number.isFinite(p.confidence) ? `<p>Source-data confidence signal: ${text(Math.round(p.confidence * 100))}/100. This is not a customer rating, service verification or guarantee.</p>` : ''}
+  const sourceInfo = `<p>Listing data source: Overture Maps Places ${text(state.activeOvertureRelease || CONFIG.overtureRelease)}.</p>
+    ${p.sources ? `<p>Contributing sources: ${text(p.sources)}.</p>` : ''}
+    <p>Selection and classification: ${text(categoryBasis)}. Individual source records are not independently verified.</p>
     <a href="${text(CONFIG.overturePlacesDocsUrl)}" target="_blank" rel="noopener noreferrer">About Overture Places ↗</a>
-    <a href="${text(CONFIG.reportIssueUrl)}" target="_blank" rel="noopener noreferrer">Report a data issue ↗</a>`;
+    <a href="${text(CONFIG.reportIssueUrl)}" target="_blank" rel="noopener noreferrer">Report a data issue to Overture ↗</a>
+    <a href="mailto:${text(CONFIG.operator.contactEmail)}?subject=${encodeURIComponent('Listing correction or objection – CraftsmanMap')}">Request correction from CraftsmanMap ↗</a>
+    <p>Listing reference for correction: ${text(feature.id || 'unavailable')}</p>`;
+  const websiteLink = website
+    ? `<a href="${text(website)}" target="_blank" rel="noopener noreferrer nofollow" title="External website from Overture; not verified">Visit website ↗</a>`
+    : '<span class="popup-no-site">No website provided</span>';
   const html = `
     <article class="popup-card">
       <div class="popup-mobile-head"><span class="popup-mobile-grip" aria-hidden="true"></span></div>
@@ -736,29 +685,21 @@ function showPopup(feature, lngLat) {
       <h2>${text(p.name)}</h2>
       <div class="popup-mobile-summary">
         <div class="popup-mobile-service">${text(p.subcategoryLabel || p.categoryLabel || 'Not specified')}</div>
-        <div class="popup-mobile-meta"><span>${p.address ? text(p.address) : 'Address unavailable'}</span>${distance ? `<strong>${text(distance)} away</strong>` : ''}</div>
+        <div class="popup-mobile-meta"><span>${coordinateText ? text(coordinateText) : 'Coordinates unavailable'}</span>${distance ? `<strong>${text(distance)} away</strong>` : ''}</div>
       </div>
-      <button class="popup-more-toggle" type="button" aria-expanded="false">Show more details <span aria-hidden="true">⌄</span></button>
+      <button class="popup-more-toggle" type="button" aria-expanded="false">About the data <span aria-hidden="true">⌄</span></button>
       <div class="popup-scroll">
-      <div class="popup-overview">
-        <div class="popup-key-info"><span>Type of business</span><strong>${text(p.subcategoryLabel || p.categoryLabel || 'Not specified')}</strong></div>
-        ${p.entityType ? `<div class="popup-key-info"><span>Business focus</span><strong>${text(entityTypeLabel(p.entityType))}</strong></div>` : ''}
-        <div class="popup-key-info"><span>Address from Overture</span><strong>${p.address ? text(p.address) : 'Street address not supplied'}</strong></div>
-        ${distance ? `<div class="popup-key-info"><span>Straight-line distance</span><strong>${text(distance)} from the search point</strong></div>` : ''}
-        <div class="popup-key-info"><span>Status in source data</span><strong>${p.status && p.status !== 'Operating status not supplied' ? `${text(p.status)} (not checked live)` : 'Unavailable – check with the business'}</strong></div>
+        <div class="popup-overview">
+          <div class="popup-key-info"><span>Category</span><strong>${text(p.subcategoryLabel || p.categoryLabel || 'Not specified')}</strong></div>
+          <div class="popup-key-info"><span>Coordinates (lat, lon)</span><strong>${text(coordinateText || '—')}</strong></div>
+          ${distance ? `<div class="popup-key-info"><span>Straight-line distance</span><strong>${text(distance)}</strong></div>` : ''}
+        </div>
+        <div class="popup-actions popup-actions-desktop">${websiteLink}</div>
+        <p class="popup-hint"><strong>Please note:</strong> A map listing is not an endorsement or business verification. Check the provider before hiring.</p>
+        <p class="popup-source-line"><strong>Source: Overture Maps Places.</strong> CraftsmanMap selects and categorises source listings. <a href="${text(CONFIG.reportIssueUrl)}" target="_blank" rel="noopener noreferrer">Report source errors ↗</a></p>
+        <details><summary>Data sources and selection</summary>${sourceInfo}</details>
       </div>
-      ${secondary.length ? `<p class="popup-secondary"><strong>Other relevant categories:</strong> ${secondary.map(text).join(' · ')}</p>` : ''}
-      <div class="popup-actions popup-actions-desktop">${website
-        ? `<a href="${text(website)}" target="_blank" rel="noopener noreferrer nofollow" title="External website from Overture; not verified">Visit website ↗</a>`
-        : (mapLink ? `<a href="${text(mapLink)}" target="_blank" rel="noopener noreferrer">Open map ↗</a>` : '<span class="popup-no-site">No website provided</span>')}</div>
-      ${extraLinks ? `<div class="popup-contact">${extraLinks}</div>` : ''}
-      <p class="popup-hint"><strong>Please note:</strong> this is a mapped listing, not an endorsement or quality check. Verify services, licences, insurance and contact details before hiring.</p>
-      <p class="popup-source-line"><strong>Source: Overture Maps Places.</strong> CraftsmanMap displays upstream listings without independently verifying each business. <a href="${text(CONFIG.reportIssueUrl)}" target="_blank" rel="noopener noreferrer">Report errors to Overture ↗</a></p>
-      <details><summary>Data sources and selection</summary>${sourceInfo}</details>
-      </div>
-      <div class="popup-actions popup-actions-mobile">${website
-        ? `<a href="${text(website)}" target="_blank" rel="noopener noreferrer nofollow" title="External website from Overture; not verified">Visit website ↗</a>`
-        : (mapLink ? `<a href="${text(mapLink)}" target="_blank" rel="noopener noreferrer">Open map ↗</a>` : '<span class="popup-no-site">No website provided</span>')}</div>
+      <div class="popup-actions popup-actions-mobile">${websiteLink}</div>
     </article>`;
   // Mobile: keep the company card OUTSIDE the MapLibre map canvas. An anchored
   // popup was clipped by the map/sidebar stacking contexts on real Android.
@@ -787,7 +728,7 @@ function showPopup(feature, lngLat) {
     more.addEventListener('click', () => {
       const expanded = overlay.querySelector('.popup-card').classList.toggle('is-expanded');
       more.setAttribute('aria-expanded', String(expanded));
-      more.innerHTML = expanded ? 'Show fewer details <span aria-hidden="true">⌃</span>' : 'Show more details <span aria-hidden="true">⌄</span>';
+      more.innerHTML = expanded ? 'Hide data details <span aria-hidden="true">⌃</span>' : 'About the data <span aria-hidden="true">⌄</span>';
     });
     return;
   }
@@ -1232,6 +1173,7 @@ function addNormalizedFeatures(rawFeatures, center, radiusMeters, dedupe) {
       if (!Number.isFinite(normalized.properties.distanceMeters)) continue;
       if (normalized.properties.distanceMeters > radiusMeters + 0.5) continue;
     }
+    if (isSuppressedListing(normalized)) continue;
     const key = String(normalized.id);
     if (!dedupe.has(key)) dedupe.set(key, normalized);
   }

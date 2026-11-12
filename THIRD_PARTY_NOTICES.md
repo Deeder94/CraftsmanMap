@@ -1,6 +1,8 @@
 # Third-party notices — CraftsmanMap (global English demo)
 
-Application version: craftsmanmap-global-en-v1.1 (based on r17.17)
+Current external terms and source attribution: [Sources & providers](./providers.html). The providers’ official policy pages are authoritative for their current terms; this file retains specific credit and required licence notices.
+
+Application: CraftsmanMap (global English release v1.5)
 
 ## Overture Maps Places
 
@@ -61,7 +63,7 @@ Used by `@mapbox/vector-tile` to decode Protocol Buffer data. The browser fetche
 
 ## CraftsmanMap application code
 
-Based on the original Swedish Hantverkarkartan project. The operator retains rights to the application code. No additional open-source licence is granted by this notice. Third-party licences continue to apply to the relevant libraries and source datasets.
+Based on the original Swedish Hantverkarkartan project. The operator reserves rights to original application code to the extent owned. No new open-source licence is granted by this release. This does not revoke rights that may have been validly granted for underlying code in any earlier Hantverkarkartan version. Third-party licences continue to apply to the relevant libraries and source datasets.
 
 ## Photon address search
 
